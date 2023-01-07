@@ -1,3 +1,4 @@
+#[cfg(feature = "assume_cell_layout")]
 use core::cell::Cell;
 
 use crate::{ArrayCell, SliceCell};
@@ -41,7 +42,7 @@ macro_rules! delegate_to_slice {
             type Output = SliceCell<T>;
 
             fn get(self, slice: &SliceCell<T>) -> Option<&Self::Output> {
-                slice.as_raw().get(self).map(SliceCell::from_raw)
+                slice.as_raw_ref().get(self).map(SliceCell::from_raw_ref)
             }
 
             fn get_mut(self, slice: &mut SliceCell<T>) -> Option<&mut Self::Output> {
@@ -55,7 +56,7 @@ macro_rules! delegate_to_slice {
             type Output = SliceCell<T>;
 
             fn get(self, slice: &ArrayCell<T, N>) -> Option<&Self::Output> {
-                slice.as_raw().get(self).map(SliceCell::from_raw)
+                slice.as_raw_ref().get(self).map(SliceCell::from_raw_ref)
             }
 
             fn get_mut(self, slice: &mut ArrayCell<T, N>) -> Option<&mut Self::Output> {

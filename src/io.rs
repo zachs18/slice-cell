@@ -12,7 +12,7 @@ impl Write for &SliceCell<u8> {
         let write_len = core::cmp::min(self.len(), buf.len());
         if write_len > 0 {
             unsafe {
-                core::ptr::copy_nonoverlapping(buf.as_ptr(), self.as_ptr(), write_len);
+                core::ptr::copy_nonoverlapping(buf.as_ptr(), self.as_ptr().cast(), write_len);
             }
             *self = self.split_at(write_len).1;
         }
@@ -29,7 +29,7 @@ impl Read for &SliceCell<u8> {
         let read_len = core::cmp::min(self.len(), buf.len());
         if read_len > 0 {
             unsafe {
-                core::ptr::copy_nonoverlapping(self.as_ptr(), buf.as_mut_ptr(), read_len);
+                core::ptr::copy_nonoverlapping(self.as_ptr().cast(), buf.as_mut_ptr(), read_len);
             }
             *self = self.split_at(read_len).1;
         }
@@ -44,7 +44,11 @@ impl Read for &SliceCell<u8> {
         unsafe {
             let write_into = buf.spare_capacity_mut();
             debug_assert!(write_into.len() >= read_len);
-            core::ptr::copy_nonoverlapping(self.as_ptr(), write_into.as_mut_ptr().cast(), read_len);
+            core::ptr::copy_nonoverlapping(
+                self.as_ptr().cast::<u8>(),
+                write_into.as_mut_ptr().cast(),
+                read_len,
+            );
             buf.set_len(buf.len() + read_len);
         }
         *self = self.split_at(read_len).1;
@@ -136,13 +140,15 @@ impl<T: AsRef<SliceCell<u8>>> Seek for Cursor<T> {
 #[cfg(test)]
 mod tests {
     use crate::{io::Cursor, SliceCell};
+    use alloc::boxed::Box;
     use std::io::{Read, Seek, Write};
 
     #[test]
     fn concurrent() {
-        let data = SliceCell::new_boxed(std::vec![0u8; 2048].into_boxed_slice());
-        let mut writer = Cursor::new(&*data);
-        let mut reader = Cursor::new(&*data);
+        let data: Box<SliceCell<u8>> =
+            SliceCell::new_boxed(std::vec![0u8; 2048].into_boxed_slice());
+        let mut writer: Cursor<&SliceCell<u8>> = Cursor::new(&*data);
+        let mut reader: Cursor<&SliceCell<u8>> = Cursor::new(&*data);
         let mut buf = [0u8; 14];
 
         writer.write(b"Hello, world!!").unwrap();
