@@ -1,0 +1,20 @@
+[package]
+name = "slice-cell"
+version = "0.0.1"
+authors = ["Zachary S"]
+edition = "2021"
+description = "A `Cell<[T]>`-like mutable slice, that allows slice-like APIs."
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+categories = ["data-structures"]
+#repository = "https://github.com/zachs18/buffer-cell"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["std", "assume_cell_layout"]
+assume_cell_layout = []
+std = ["alloc"]
+alloc = []
+
+[dependencies]
