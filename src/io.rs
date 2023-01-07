@@ -168,4 +168,36 @@ mod tests {
         reader.read(&mut buf).unwrap();
         assert_eq!(buf, *b"Hello, world!");
     }
+
+    #[test]
+    fn rc() {
+        let data = SliceCell::try_new_rc(std::vec![0u8; 2048].into()).unwrap();
+        let mut writer = Cursor::new(data.clone());
+        let mut reader = Cursor::new(data.clone());
+        drop(data);
+        let mut buf = [0u8; 13];
+
+        writer.write(b"Hello, world!").unwrap();
+
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, *b"Hello, world!");
+
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, [0u8; 13]);
+
+        writer.write(b"Hello, world!").unwrap();
+        writer.write(b"Hello, world!").unwrap();
+
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, *b"Hello, world!");
+
+        reader.seek(std::io::SeekFrom::Start(0)).unwrap();
+
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, *b"Hello, world!");
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, *b"Hello, world!");
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, *b"Hello, world!");
+    }
 }

@@ -14,7 +14,7 @@ impl<T> SliceCellIndex<SliceCell<T>> for usize {
     type Output = Cell<T>;
 
     fn get(self, slice: &SliceCell<T>) -> Option<&Self::Output> {
-        slice.as_std_transposed().get(self)
+        slice.as_std_transposed_ref().get(self)
     }
 
     fn get_mut(self, slice: &mut SliceCell<T>) -> Option<&mut Self::Output> {
@@ -27,7 +27,7 @@ impl<T, const N: usize> SliceCellIndex<ArrayCell<T, N>> for usize {
     type Output = Cell<T>;
 
     fn get(self, array: &ArrayCell<T, N>) -> Option<&Self::Output> {
-        array.as_std_transposed().get(self)
+        array.as_std_transposed_ref().get(self)
     }
 
     fn get_mut(self, array: &mut ArrayCell<T, N>) -> Option<&mut Self::Output> {
