@@ -143,30 +143,30 @@ mod tests {
         let data = SliceCell::new_boxed(std::vec![0u8; 2048].into_boxed_slice());
         let mut writer = Cursor::new(&*data);
         let mut reader = Cursor::new(&*data);
-        let mut buf = [0u8; 13];
+        let mut buf = [0u8; 14];
 
-        writer.write(b"Hello, world!").unwrap();
-
-        reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        writer.write(b"Hello, world!!").unwrap();
 
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, [0u8; 13]);
-
-        writer.write(b"Hello, world!").unwrap();
-        writer.write(b"Hello, world!").unwrap();
+        assert_eq!(buf, *b"Hello, world!!");
 
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, [0u8; 14]);
+
+        writer.write(b"Wonderful day!").unwrap();
+        writer.write(b"wow, much cell").unwrap();
+
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, *b"wow, much cell");
 
         reader.seek(std::io::SeekFrom::Start(0)).unwrap();
 
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, *b"Hello, world!!");
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, *b"Wonderful day!");
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, *b"wow, much cell");
     }
 
     #[test]
@@ -175,29 +175,29 @@ mod tests {
         let mut writer = Cursor::new(data.clone());
         let mut reader = Cursor::new(data.clone());
         drop(data);
-        let mut buf = [0u8; 13];
+        let mut buf = [0u8; 14];
 
-        writer.write(b"Hello, world!").unwrap();
-
-        reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        writer.write(b"Hello, world!!").unwrap();
 
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, [0u8; 13]);
-
-        writer.write(b"Hello, world!").unwrap();
-        writer.write(b"Hello, world!").unwrap();
+        assert_eq!(buf, *b"Hello, world!!");
 
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, [0u8; 14]);
+
+        writer.write(b"Wonderful day!").unwrap();
+        writer.write(b"wow, much cell").unwrap();
+
+        reader.read(&mut buf).unwrap();
+        assert_eq!(buf, *b"wow, much cell");
 
         reader.seek(std::io::SeekFrom::Start(0)).unwrap();
 
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, *b"Hello, world!!");
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, *b"Wonderful day!");
         reader.read(&mut buf).unwrap();
-        assert_eq!(buf, *b"Hello, world!");
+        assert_eq!(buf, *b"wow, much cell");
     }
 }
