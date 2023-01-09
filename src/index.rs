@@ -42,28 +42,30 @@ macro_rules! delegate_to_slice {
             type Output = SliceCell<T>;
 
             fn get(self, slice: &SliceCell<T>) -> Option<&Self::Output> {
-                slice.as_raw_ref().get(self).map(SliceCell::from_raw_ref)
+                let slice = slice.as_raw_ref().get(self)?;
+                // SAFETY: the input to `SliceCell::from_raw_ref` is the result of `SliceCell::into_raw_ref`.
+                Some(unsafe {SliceCell::from_raw_ref(slice)})
             }
 
             fn get_mut(self, slice: &mut SliceCell<T>) -> Option<&mut Self::Output> {
-                slice
-                    .as_raw_mut()
-                    .get_mut(self)
-                    .map(SliceCell::from_raw_mut)
+                let slice = slice.as_raw_mut().get_mut(self)?;
+                // SAFETY: the input to `SliceCell::from_raw_mut` is the result of `SliceCell::into_raw_mut`.
+                Some(unsafe { SliceCell::from_raw_mut(slice)})
             }
         }
         impl<T, const N: usize> SliceCellIndex<ArrayCell<T, N>> for $idx {
             type Output = SliceCell<T>;
 
             fn get(self, slice: &ArrayCell<T, N>) -> Option<&Self::Output> {
-                slice.as_raw_ref().get(self).map(SliceCell::from_raw_ref)
+                let slice = slice.as_raw_ref().get(self)?;
+                // SAFETY: the input to `SliceCell::from_raw_ref` is the result of `ArrayCell::into_raw_ref`.
+                Some(unsafe { SliceCell::from_raw_ref(slice) })
             }
 
             fn get_mut(self, slice: &mut ArrayCell<T, N>) -> Option<&mut Self::Output> {
-                slice
-                    .as_raw_mut()
-                    .get_mut(self)
-                    .map(SliceCell::from_raw_mut)
+                let slice = slice.as_raw_mut().get_mut(self)?;
+                // SAFETY: the input to `SliceCell::from_raw_mut` is the result of `ArrayCell::into_raw_mut`.
+                Some(unsafe {SliceCell::from_raw_mut(slice)})
             }
         }
     )* };
