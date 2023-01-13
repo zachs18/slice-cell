@@ -1,19 +1,25 @@
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use crate::SliceCell;
+use std::{
+    io::{self, Read, Seek, SeekFrom, Write},
+    vec::Vec,
+};
+#[cfg(feature = "tokio")]
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+#[cfg(feature = "tokio")]
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
+
 // mostly copied from stdlib: e.g. library/std/src/io/cursor.rs:281
 // note that these *cannot* implement BufRead, since fill_buf returns a `&[u8]` which could be
 // shared with another thread.
 
-use alloc::vec::Vec;
-
-use crate::SliceCell;
-
 impl Write for &SliceCell<u8> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let write_len = core::cmp::min(self.len(), buf.len());
+        let write_len = std::cmp::min(self.len(), buf.len());
         if write_len > 0 {
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf.as_ptr(), self.as_ptr().cast(), write_len);
-            }
+            self[..write_len].copy_from_slice(buf);
             *self = self.split_at(write_len).1;
         }
         Ok(write_len)
@@ -26,11 +32,9 @@ impl Write for &SliceCell<u8> {
 
 impl Read for &SliceCell<u8> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let read_len = core::cmp::min(self.len(), buf.len());
+        let read_len = std::cmp::min(self.len(), buf.len());
         if read_len > 0 {
-            unsafe {
-                core::ptr::copy_nonoverlapping(self.as_ptr().cast(), buf.as_mut_ptr(), read_len);
-            }
+            self[..read_len].copy_into_slice(&mut buf[..read_len]);
             *self = self.split_at(read_len).1;
         }
         Ok(read_len)
@@ -41,10 +45,11 @@ impl Read for &SliceCell<u8> {
             return Ok(0);
         }
         buf.reserve(read_len);
+        // SAFETY: cannot use `Vec::extend_from_slice`, since it calls `T::clone`, which is arbitrary user code.
         unsafe {
             let write_into = buf.spare_capacity_mut();
             debug_assert!(write_into.len() >= read_len);
-            core::ptr::copy_nonoverlapping(
+            std::ptr::copy_nonoverlapping(
                 self.as_ptr().cast::<u8>(),
                 write_into.as_mut_ptr().cast(),
                 read_len,
@@ -60,6 +65,9 @@ pub struct Cursor<T> {
     inner: T,
     pos: u64,
 }
+
+// SAFETY: We do not allow access to the inner `T` by (pinned) reference.
+impl<T> Unpin for Cursor<T> {}
 
 impl<T> Cursor<T> {
     pub const fn new(inner: T) -> Self {
@@ -134,6 +142,121 @@ impl<T: AsRef<SliceCell<u8>>> Seek for Cursor<T> {
                 "invalid seek to a negative or overflowing position",
             )),
         }
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl AsyncRead for &SliceCell<u8> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let read_len = std::cmp::min(buf.remaining(), self.len());
+        if read_len > 0 {
+            if cfg!(feature = "tokio_assumptions") {
+                // SAFETY: Assumes that `ReadBuf::put_slice` does not perform a
+                // context switch, and that it only accesses itself and the slice
+                // passed to it. (i.e. it does not access *self except through
+                // the reference we pass to it)
+                buf.put_slice(unsafe { &*self[..read_len].as_ptr() });
+            } else {
+                // SAFETY: we do not de-initialize any bytes of this buffer
+                let unfilled = unsafe { buf.unfilled_mut() };
+                debug_assert!(
+                    read_len <= unfilled.len(),
+                    "unfilled.len() should be == buf.remaining()"
+                );
+                // SAFETY: we are copying read_len bytes from `self` into `unfilled`.
+                // We know they do not overlap, since `unfilled` is `&mut [u8]` and
+                // `self` is a cell type.
+                // We know we do not go off the end of either, since `read_len` is
+                // the minimum of their lengths.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        self.as_ptr() as *const u8,
+                        unfilled.as_mut_ptr().cast(),
+                        read_len,
+                    );
+                }
+                // SAFETY: we just wrote read_len bytes
+                unsafe {
+                    buf.assume_init(read_len);
+                }
+                buf.advance(read_len);
+            }
+            *self = self.split_at(read_len).1;
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl AsyncWrite for &SliceCell<u8> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Poll::Ready(self.write(buf))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl<T: AsRef<SliceCell<u8>>> AsyncRead for Cursor<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let old_len = buf.filled().len();
+        std::task::ready!(AsyncRead::poll_read(
+            Pin::new(&mut self.remaining_slice()),
+            cx,
+            buf
+        ))?;
+        let new_len = buf.filled().len();
+        self.pos += (new_len - old_len) as u64;
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl<T: AsRef<SliceCell<u8>>> AsyncWrite for Cursor<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Poll::Ready(self.write(buf))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl<T: AsRef<SliceCell<u8>>> AsyncSeek for Cursor<T> {
+    fn start_seek(mut self: Pin<&mut Self>, style: SeekFrom) -> io::Result<()> {
+        self.seek(style)?;
+        Ok(())
+    }
+
+    fn poll_complete(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        Poll::Ready(Ok(self.pos))
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "slice-cell"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Zachary S"]
 edition = "2021"
 description = "A `Cell<[T]>`-like mutable slice, that allows slice-like APIs."
@@ -18,5 +18,8 @@ assume_cell_layout = []
 std = ["alloc"]
 alloc = []
 rc = ["alloc"]
+tokio = ["dep:tokio", "std"]
+tokio_assumptions = ["tokio"]
 
 [dependencies]
+tokio = { version = "1.24.1", default-features = false, optional = true }

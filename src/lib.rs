@@ -608,7 +608,7 @@ impl<T> SliceCell<T> {
         T: Clone,
     {
         assert_eq!(self.len(), src.len());
-        // Clone::clone is arbitrary user code, so we can't use `self.inner.get().clone_from_slice()`
+        // T::clone and T::drop are arbitrary user code, so we can't use `self.inner.get().clone_from_slice()`
         for (dst, val) in self.iter().zip(src.iter().cloned()) {
             dst.set(val);
         }
@@ -621,9 +621,10 @@ impl<T> SliceCell<T> {
         T: Default,
     {
         assert_eq!(self.len(), dst.len());
+        // T::default and T::drop are arbitrary user code, so we can't hold a reference into self while it runs.
         for (src, dst) in self.iter().zip(dst.iter_mut()) {
-            let val = src.replace(T::default());
-            *dst = val
+            let val = src.take();
+            *dst = val;
         }
     }
 
@@ -633,7 +634,7 @@ impl<T> SliceCell<T> {
     where
         T: Default,
     {
-        self.iter().map(|src| src.replace(T::default())).collect()
+        self.iter().map(Cell::take).collect()
     }
 
     /// Copy all elements from this `SliceCell` into a mutable slice.
@@ -642,7 +643,8 @@ impl<T> SliceCell<T> {
         T: Copy,
     {
         assert_eq!(self.len(), dst.len());
-        // SAFETY: TODO
+        // SAFETY: `slice::copy_from_slice` uses a memcpy to copy the slice, and does nothing else, so it does not access`**self`
+        // in an invalid way.
         dst.copy_from_slice(unsafe { &*self.inner.get() });
     }
 
