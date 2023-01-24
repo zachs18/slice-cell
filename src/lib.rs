@@ -9,14 +9,22 @@ extern crate std;
 use alloc::rc::Rc;
 #[cfg(feature = "alloc")]
 use alloc::{boxed::Box, vec::Vec};
-#[cfg(feature = "assume_cell_layout")]
 use core::cell::Cell;
 use core::cell::UnsafeCell;
-use core::ops::Deref;
-use core::ops::DerefMut;
 use core::ops::Index;
 use core::ops::IndexMut;
 use index::SliceCellIndex;
+
+// TODO: decide whether &mut apis should in general return `&mut T` or `&mut Cell<T>`
+// (or whether we need &mut apis at all, other than `as_mut(&mut self) -> &mut [T]`).
+//
+// Note: `Cell::get_mut` exists to go from `&mut Cell<T>` to `&mut T`.
+//
+// Currently, `split_first`/`split_last` return `&mut T`, but
+// `get_mut(usize)` returns `&mut Cell<T>`.
+
+// TODO: #[cfg_attr(doc_cfg, doc(cfg(feature = ...)))]
+// see: https://github.com/rust-random/rand/pull/1019/files
 
 mod index;
 #[cfg(feature = "std")]
@@ -26,175 +34,130 @@ pub mod io;
 ///
 /// This type dereferences to [`SliceCell<T>`](SliceCell).
 ///
-/// Under the `assume_cell_layout` cargo feature, this type can be converted to and from `Cell<[T; N]>` and `[Cell<T>; N]` in several ways.
+/// This type can be converted to and from `Cell<[T; N]>` and `[Cell<T>; N]` in several ways.
 #[repr(transparent)]
 pub struct ArrayCell<T, const N: usize> {
     inner: UnsafeCell<[T; N]>,
 }
 
+// SAFETY: `Cell`-like types are safe to *send* between threads, but not to *share* between threads
+// (so no `Sync` impl).
+unsafe impl<T: Send, const N: usize> Send for ArrayCell<T, N> {}
+
 /// A [`Cell<[T]>`](core::cell::Cell)-like type that has some additional slice-like API.
 ///
 /// References to this type can be gotten from dereferencing an [`ArrayCell<T, N>`](ArrayCell), or using [`from_mut`](SliceCell::from_mut).
 ///
-/// Under the `assume_cell_layout` cargo feature, this type can be converted to and from `Cell<[T]>` and `[Cell<T>]` in several ways.
+/// This type can be converted to and from `Cell<[T]>` and `[Cell<T>]` in several ways.
 #[repr(transparent)]
 pub struct SliceCell<T> {
     inner: UnsafeCell<[T]>,
 }
 
-#[cfg(feature = "assume_cell_layout")]
+// SAFETY: `Cell`-like types are safe to *send* between threads, but not to *share* between threads
+// (so no `Sync` impl).
+unsafe impl<T: Send> Send for SliceCell<T> {}
+
 impl<T, const N: usize> ArrayCell<T, N> {
     /// View this [`ArrayCell`] as a [`Cell`] of an [array] of `N` elements.
-    pub fn as_std_ref(&self) -> &Cell<[T; N]> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do:
+    pub const fn as_std_ref(&self) -> &Cell<[T; N]> {
+        // SAFETY: `Cell` upholds the same invariants that we do:
         // 1a. `Cell<T>` has the same layout as `T`.
         // 1b. `ArrayCell<T, N>` has the same layout as `[T; N]`.
         // 1c. `SliceCell<T>` has the same layout as `[T]`.
         // 2. `&Cell<T>` does not allow arbitrary user code to access `T` by reference directly.
         // Additional assumptions:
         // 3. `Cell<[T; N]>` has the same layout as `[Cell<T>; N]` (implied by 1).
+        // This safety comment applies to the bodies of all `as_std_*`/`into_std_*` and `from_std_*` methods
+        // on `SliceCell` and `ArrayCell`.
         unsafe { &*(self as *const Self).cast() }
     }
     /// View this [`ArrayCell`] as an [array] of `N` [`Cell`]s.
-    pub fn as_std_transposed_ref(&self) -> &[Cell<T>; N] {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+    pub const fn as_std_transposed_ref(&self) -> &[Cell<T>; N] {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &*(self as *const Self).cast() }
     }
     /// View a [`Cell`] of an [array] of `N` elements as an [`ArrayCell`].
-    pub fn from_std_ref(std: &Cell<[T; N]>) -> &Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+    pub const fn from_std_ref(std: &Cell<[T; N]>) -> &Self {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &*(std as *const Cell<[T; N]>).cast() }
     }
     /// View an [array] of `N` [`Cell`]s as an [`ArrayCell`].
-    pub fn from_std_transposed_ref(std: &[Cell<T>; N]) -> &Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+    pub const fn from_std_transposed_ref(std: &[Cell<T>; N]) -> &Self {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &*(std as *const [Cell<T>; N]).cast() }
     }
     /// View this [`ArrayCell`] as a [`Cell`] of an [array] of `N` elements.
     pub fn as_std_mut(&mut self) -> &mut Cell<[T; N]> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(self as *mut Self).cast() }
     }
     /// View this [`ArrayCell`] as an [array] of `N` [`Cell`]s.
     pub fn as_std_transposed_mut(&mut self) -> &mut [Cell<T>; N] {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(self as *mut Self).cast() }
     }
     /// View a [`Cell`] of an [array] of `N` elements as an [`ArrayCell`].
     pub fn from_std_mut(std: &mut Cell<[T; N]>) -> &mut Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(std as *mut Cell<[T; N]>).cast() }
     }
     /// View an [array] of `N` [`Cell`]s as an [`ArrayCell`].
     pub fn from_std_transposed_mut(std: &mut [Cell<T>; N]) -> &mut Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(std as *mut [Cell<T>; N]).cast() }
     }
 }
 
-#[cfg(all(feature = "assume_cell_layout", feature = "alloc"))]
+#[cfg(feature = "alloc")]
 impl<T, const N: usize> ArrayCell<T, N> {
     /// View this [`ArrayCell`] as a [`Cell`] of an [array] of `N` elements.
     pub fn into_std_boxed(self: Box<Self>) -> Box<Cell<[T; N]>> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(self).cast()) }
     }
     /// View this [`ArrayCell`] as an [array] of `N` [`Cell`]s.
     pub fn into_std_transposed_boxed(self: Box<Self>) -> Box<[Cell<T>; N]> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(self).cast()) }
     }
     /// View a [`Cell`] of an [array] of `N` elements as an [`ArrayCell`].
     pub fn from_std_boxed(std: Box<Cell<[T; N]>>) -> Box<Self> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(std).cast()) }
     }
     /// View an [array] of `N` [`Cell`]s as an [`ArrayCell`].
     pub fn from_std_transposed_boxed(std: Box<[Cell<T>; N]>) -> Box<Self> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(std).cast()) }
     }
 }
 
-#[cfg(all(feature = "assume_cell_layout", feature = "rc"))]
+#[cfg(feature = "rc")]
 impl<T, const N: usize> ArrayCell<T, N> {
     /// View this [`ArrayCell`] as a [`Cell`] of an [array] of `N` elements.
     pub fn into_std_rc(self: Rc<Self>) -> Rc<Cell<[T; N]>> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Rc::from_raw(Rc::into_raw(self).cast()) }
     }
     /// View this [`ArrayCell`] as an [array] of `N` [`Cell`]s.
     pub fn into_std_transposed_rc(self: Rc<Self>) -> Rc<[Cell<T>; N]> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Rc::from_raw(Rc::into_raw(self).cast()) }
     }
     /// View a [`Cell`] of an [array] of `N` elements as an [`ArrayCell`].
     pub fn from_std_rc(std: Rc<Cell<[T; N]>>) -> Rc<Self> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Rc::from_raw(Rc::into_raw(std).cast()) }
     }
     /// View an [array] of `N` [`Cell`]s as an [`ArrayCell`].
     pub fn from_std_transposed_rc(std: Rc<[Cell<T>; N]>) -> Rc<Self> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Rc::from_raw(Rc::into_raw(std).cast()) }
     }
 }
 
 impl<T, const N: usize> ArrayCell<T, N> {
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_ref` or `SliceCell::from_raw_ref`.
-    pub(crate) fn as_raw_ref(&self) -> &[UnsafeCell<T>; N] {
-        unsafe { &*(self as *const Self).cast() }
-    }
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_mut` or `SliceCell::from_raw_mut`.
-    pub(crate) fn as_raw_mut(&mut self) -> &mut [UnsafeCell<T>; N] {
-        unsafe { &mut *(self as *mut Self).cast() }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::as_raw_ref` or `SliceCell::as_raw_ref`, and possible slicing, or be zero-sized.
-    pub(crate) unsafe fn from_raw_ref(this: &[UnsafeCell<T>; N]) -> &Self {
-        unsafe { &*(this as *const [UnsafeCell<T>; N]).cast() }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::as_raw_mut` or `SliceCell::as_raw_mut`, and possible slicing, or be zero-sized.
-    pub(crate) unsafe fn from_raw_mut(this: &mut [UnsafeCell<T>; N]) -> &mut Self {
-        unsafe { &mut *(this as *mut [UnsafeCell<T>; N]).cast() }
-    }
-
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_boxed` or `SliceCell::from_raw_boxed`.
-    #[cfg(feature = "alloc")]
-    pub(crate) fn into_raw_boxed(self: Box<Self>) -> Box<[UnsafeCell<T>; N]> {
-        unsafe { Box::from_raw(Box::into_raw(self).cast()) }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::into_raw_boxed` or `SliceCell::into_raw_boxed`, or be zero-sized.
-    #[cfg(feature = "alloc")]
-    pub(crate) unsafe fn from_raw_boxed(this: Box<[UnsafeCell<T>; N]>) -> Box<Self> {
-        unsafe { Box::from_raw(Box::into_raw(this).cast()) }
-    }
-
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_rc` or `SliceCell::from_raw_rc`.
-    #[cfg(feature = "rc")]
-    pub(crate) fn into_raw_rc(self: Rc<Self>) -> Rc<[UnsafeCell<T>; N]> {
-        unsafe { Rc::from_raw(Rc::into_raw(self).cast()) }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::into_raw_rc` or `SliceCell::into_raw_rc`.
-    #[cfg(feature = "rc")]
-    pub(crate) unsafe fn from_raw_rc(this: Rc<[UnsafeCell<T>; N]>) -> Rc<Self> {
-        unsafe { Rc::from_raw(Rc::into_raw(this).cast()) }
-    }
-
     /// Returns a raw pointer to the underlying data in this [`ArrayCell`].
     pub fn as_ptr(&self) -> *mut [T; N] {
         UnsafeCell::raw_get(&self.inner).cast()
@@ -216,14 +179,14 @@ impl<T, const N: usize> ArrayCell<T, N> {
     #[cfg(feature = "alloc")]
     pub fn new_boxed(inner: Box<[T; N]>) -> Box<Self> {
         // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
-        unsafe { Box::from_raw(Box::into_raw(inner) as *mut _) }
+        unsafe { Box::from_raw(Box::into_raw(inner).cast()) }
     }
 
     /// Unwaps a [boxed](alloc::boxed::Box) [ArrayCell] into an [array].
     #[cfg(feature = "alloc")]
     pub fn into_inner_boxed(self: Box<Self>) -> Box<[T; N]> {
         // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
-        unsafe { Box::from_raw(Box::into_raw(self) as *mut _) }
+        unsafe { Box::from_raw(Box::into_raw(self).cast()) }
     }
 
     /// Wraps a [reference-counted](alloc::rc::Rc) [array] in an `ArrayCell`, if it is uniquely owned.
@@ -252,19 +215,35 @@ impl<T, const N: usize> ArrayCell<T, N> {
 
     #[cfg(feature = "rc")]
     /// Replacement for `From` impl, since `Rc` is not fundamental.
+    // TODO: If manual coercion is added, just make ArrayCell<T, N> coerce to SliceCell<T>
+    // and deprecate `ArrayCell::unsize_rc` (but not `SliceCell::try_size_rc`).
     pub fn unsize_rc(self: Rc<Self>) -> Rc<SliceCell<T>> {
-        // SAFETY: the input to `SliceCell::from_raw_rc` is the result of `ArrayCell::into_raw_rc`.
-        unsafe { SliceCell::from_raw_rc(self.into_raw_rc()) }
+        SliceCell::from_std_transposed_rc(ArrayCell::into_std_transposed_rc(self))
     }
 
     /// Unwraps a uniquely borrowed [`ArrayCell`] into an array.
-    pub fn get_mut(&mut self) -> &mut [T; N] {
+    #[doc(alias = "get_mut")]
+    pub fn as_mut(&mut self) -> &mut [T; N] {
         self.inner.get_mut()
     }
 
     /// Wraps a uniquely borrowed array in an [`ArrayCell`].
     pub fn from_mut(inner: &mut [T; N]) -> &mut Self {
         unsafe { &mut *(inner as *mut [T; N]).cast() }
+    }
+
+    /// Returns a reference to an element or subslice depending on the type of index.
+    ///
+    /// See [`slice::get`].
+    pub fn get<I: SliceCellIndex<Self>>(&self, idx: I) -> Option<&I::Output> {
+        idx.get(self)
+    }
+
+    /// Returns a mutable reference to an element or subslice depending on the type of index.
+    ///
+    /// See also [`slice::get_mut`].
+    pub fn get_mut<I: SliceCellIndex<Self>>(&mut self, idx: I) -> Option<&mut I::Output> {
+        idx.get_mut(self)
     }
 
     /// Returns the length of the [`ArrayCell`].
@@ -275,15 +254,13 @@ impl<T, const N: usize> ArrayCell<T, N> {
 
 impl<T, const N: usize> AsRef<SliceCell<T>> for ArrayCell<T, N> {
     fn as_ref(&self) -> &SliceCell<T> {
-        // SAFETY: the input to `SliceCell::from_raw_ref` is the result of `ArrayCell::as_raw_ref`.
-        unsafe { SliceCell::from_raw_ref(self.as_raw_ref()) }
+        SliceCell::from_std_ref(self.as_std_ref())
     }
 }
 
 impl<T, const N: usize> AsMut<SliceCell<T>> for ArrayCell<T, N> {
     fn as_mut(&mut self) -> &mut SliceCell<T> {
-        // SAFETY: the input to `SliceCell::from_raw_mut` is the result of `ArrayCell::as_raw_mut`.
-        unsafe { SliceCell::from_raw_mut(self.as_raw_mut()) }
+        SliceCell::from_mut(self.as_mut())
     }
 }
 
@@ -299,170 +276,107 @@ impl<T> AsMut<SliceCell<T>> for SliceCell<T> {
     }
 }
 
-impl<T, const N: usize> Deref for ArrayCell<T, N> {
-    type Target = SliceCell<T>;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl<T, const N: usize> DerefMut for ArrayCell<T, N> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.as_mut()
-    }
-}
-
-#[cfg(feature = "assume_cell_layout")]
 impl<T> SliceCell<T> {
     /// View this [`SliceCell`] as a [`Cell`] of a [slice].
-    pub fn as_std_ref(&self) -> &Cell<[T]> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+    pub const fn as_std_ref(&self) -> &Cell<[T]> {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &*(self as *const Self as *const _) }
     }
     /// View this [`SliceCell`] as a [slice] of [`Cell`]s.
-    pub fn as_std_transposed_ref(&self) -> &[Cell<T>] {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+    pub const fn as_std_transposed_ref(&self) -> &[Cell<T>] {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &*(self as *const Self as *const _) }
     }
     /// View a [`Cell`] of a [slice] as a [`SliceCell`].
-    pub fn from_std_ref(std: &Cell<[T]>) -> &Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+    pub const fn from_std_ref(std: &Cell<[T]>) -> &Self {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &*(std as *const Cell<[T]> as *const _) }
     }
-    /// View a [slice] [`Cell`]s as a [`SliceCell`].
-    pub fn from_std_transposed_ref(std: &[Cell<T>]) -> &Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+    /// View a [slice] of [`Cell`]s as a [`SliceCell`].
+    pub const fn from_std_transposed_ref(std: &[Cell<T>]) -> &Self {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &*(std as *const [Cell<T>] as *const _) }
     }
     /// View this [`SliceCell`] as a [`Cell`] of a [slice].
     pub fn as_std_mut(&mut self) -> &mut Cell<[T]> {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(self as *mut Self as *mut _) }
     }
     /// View this [`SliceCell`] as a [slice] of [`Cell`]s.
     pub fn as_std_transposed_mut(&mut self) -> &mut [Cell<T>] {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(self as *mut Self as *mut _) }
     }
     /// View a [`Cell`] of a [slice] as a [`SliceCell`].
     pub fn from_std_mut(std: &mut Cell<[T]>) -> &mut Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(std as *mut Cell<[T]> as *mut _) }
     }
     /// View a [slice] of [`Cell`] as a [`SliceCell`].
     pub fn from_std_transposed_mut(std: &mut [Cell<T>]) -> &mut Self {
-        // SAFETY: assume_cell_layout feature is enabled, so we are assuming `Cell` upholds the same invariants that we do.
-        // See `ArrayCell::as_std_ref` for assumptions.
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { &mut *(std as *mut [Cell<T>] as *mut _) }
     }
 }
 
-#[cfg(all(feature = "assume_cell_layout", feature = "alloc"))]
+#[cfg(feature = "alloc")]
 impl<T> SliceCell<T> {
     /// View this [`SliceCell`] as a [`Cell`] of a [slice].
     pub fn into_std_boxed(self: Box<Self>) -> Box<Cell<[T]>> {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(self) as *mut _) }
     }
     /// View this [`SliceCell`] as a [slice] of [`Cell`]s.
     pub fn into_std_transposed_boxed(self: Box<Self>) -> Box<[Cell<T>]> {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(self) as *mut _) }
     }
     /// View a [`Cell`] of a [slice] as a [`SliceCell`].
     pub fn from_std_boxed(std: Box<Cell<[T]>>) -> Box<Self> {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(std) as *mut _) }
     }
+    /// View a [slice] of [`Cell`]s as a [`SliceCell`].
     pub fn from_std_transposed_boxed(std: Box<[Cell<T>]>) -> Box<Self> {
+        // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(std) as *mut _) }
     }
-}
 
-#[cfg(all(feature = "assume_cell_layout", feature = "rc"))]
-impl<T> SliceCell<T> {
-    /// View this [`SliceCell`] as a [`Cell`] of a [slice].
-    pub fn into_std_rc(self: Rc<Self>) -> Rc<Cell<[T]>> {
-        unsafe { Rc::from_raw(Rc::into_raw(self) as *const _) }
-    }
-    /// View this [`SliceCell`] as a [slice] of [`Cell`]s.
-    pub fn into_std_transposed_rc(self: Rc<Self>) -> Rc<[Cell<T>]> {
-        unsafe { Rc::from_raw(Rc::into_raw(self) as *const _) }
-    }
-    /// View a [`Cell`] of a [slice] as a [`SliceCell`].
-    pub fn from_std_rc(std: Rc<Cell<[T]>>) -> Rc<Self> {
-        unsafe { Rc::from_raw(Rc::into_raw(std) as *const _) }
-    }
-    pub fn from_std_transposed_rc(std: Rc<[Cell<T>]>) -> Rc<Self> {
-        unsafe { Rc::from_raw(Rc::into_raw(std) as *const _) }
-    }
-}
-
-impl<T> SliceCell<T> {
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_ref` or `SliceCell::from_raw_ref`.
-    pub(crate) fn as_raw_ref(&self) -> &[UnsafeCell<T>] {
-        unsafe { &*(self as *const Self as *const _) }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::as_raw_ref` or `SliceCell::as_raw_ref`, and possible slicing, or be zero-sized.
-    pub(crate) unsafe fn from_raw_ref(this: &[UnsafeCell<T>]) -> &Self {
-        unsafe { &*(this as *const _ as *const _) }
-    }
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_mut` or `SliceCell::from_raw_mut`.
-    pub(crate) fn as_raw_mut(&mut self) -> &mut [UnsafeCell<T>] {
-        unsafe { &mut *(self as *mut Self as *mut _) }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::as_raw_mut` or `SliceCell::as_raw_mut`, and possible slicing, or be zero-sized.
-    pub(crate) unsafe fn from_raw_mut(this: &mut [UnsafeCell<T>]) -> &mut Self {
-        unsafe { &mut *(this as *mut _ as *mut _) }
-    }
-
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_boxed` or `SliceCell::from_raw_boxed`.
-    #[cfg(feature = "alloc")]
-    pub(crate) fn into_raw_boxed(self: Box<Self>) -> Box<[UnsafeCell<T>]> {
-        unsafe { Box::from_raw(Box::into_raw(self) as *mut _) }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::into_raw_boxed` or `SliceCell::into_raw_boxed`, or be zero-sized.
-    #[cfg(feature = "alloc")]
-    pub(crate) unsafe fn from_raw_boxed(this: Box<[UnsafeCell<T>]>) -> Box<Self> {
-        unsafe { Box::from_raw(Box::into_raw(this) as *mut _) }
-    }
-
-    /// Safety: This function is only used internally, and its output is only passed to `ArrayCell::from_raw_rc` or `SliceCell::from_raw_rc`.
-    #[cfg(feature = "rc")]
-    pub(crate) fn into_raw_rc(self: Rc<Self>) -> Rc<[UnsafeCell<T>]> {
-        unsafe { Rc::from_raw(Rc::into_raw(self) as *mut _) }
-    }
-    /// Safety: This function is only used internally, and its input must have come from `ArrayCell::into_raw_rc` or `SliceCell::into_raw_rc`
-    #[cfg(feature = "rc")]
-    pub(crate) unsafe fn from_raw_rc(this: Rc<[UnsafeCell<T>]>) -> Rc<Self> {
-        unsafe { Rc::from_raw(Rc::into_raw(this) as *mut _) }
-    }
-
-    /// Returns a raw pointer to the underlying data in this `SliceCell`.
-    pub fn as_ptr(&self) -> *mut [T] {
-        UnsafeCell::raw_get(&self.inner)
-    }
-
-    /// Unwraps a [boxed](alloc::boxed::Box) [`SliceCell`] into a slice.
-    #[cfg(feature = "alloc")]
+    /// Unwraps an owned [boxed](alloc::boxed::Box) [`SliceCell`] into a slice.
     pub fn into_inner_boxed(self: Box<Self>) -> Box<[T]> {
         // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
         unsafe { Box::from_raw(Box::into_raw(self) as *mut _) }
     }
 
-    /// Wraps a [boxed](alloc::boxed::Box) [slice] in a [`SliceCell`].
-    #[cfg(feature = "alloc")]
+    /// Wraps an owned [boxed](alloc::boxed::Box) [slice] in a [`SliceCell`].
     pub fn new_boxed(inner: Box<[T]>) -> Box<Self> {
         unsafe { Box::from_raw(Box::into_raw(inner) as *mut _) }
     }
+}
+
+#[cfg(feature = "rc")]
+impl<T> SliceCell<T> {
+    /// View this [`SliceCell`] as a [`Cell`] of a [slice].
+    pub fn into_std_rc(self: Rc<Self>) -> Rc<Cell<[T]>> {
+        // See `ArrayCell::as_std_ref` for safety.
+        unsafe { Rc::from_raw(Rc::into_raw(self) as *const _) }
+    }
+    /// View this [`SliceCell`] as a [slice] of [`Cell`]s.
+    pub fn into_std_transposed_rc(self: Rc<Self>) -> Rc<[Cell<T>]> {
+        // See `ArrayCell::as_std_ref` for safety.
+        unsafe { Rc::from_raw(Rc::into_raw(self) as *const _) }
+    }
+    /// View a [`Cell`] of a [slice] as a [`SliceCell`].
+    pub fn from_std_rc(std: Rc<Cell<[T]>>) -> Rc<Self> {
+        // See `ArrayCell::as_std_ref` for safety.
+        unsafe { Rc::from_raw(Rc::into_raw(std) as *const _) }
+    }
+    pub fn from_std_transposed_rc(std: Rc<[Cell<T>]>) -> Rc<Self> {
+        // See `ArrayCell::as_std_ref` for safety.
+        unsafe { Rc::from_raw(Rc::into_raw(std) as *const _) }
+    }
 
     /// Wraps a [reference-counted](alloc::rc::Rc) [slice] in a `SliceCell`, if it is uniquely owned.
-    #[cfg(feature = "rc")]
     pub fn try_new_rc(mut inner: Rc<[T]>) -> Result<Rc<Self>, Rc<[T]>> {
         match Rc::get_mut(&mut inner) {
             // SAFETY: `SliceCell<T>` has the same layout as `[T]`.
@@ -474,7 +388,6 @@ impl<T> SliceCell<T> {
     }
 
     /// Unwraps a [reference-counted](alloc::rc::Rc) [`SliceCell`] into an [slice], if it is uniquely owned.
-    #[cfg(feature = "rc")]
     pub fn try_into_inner_rc(mut self: Rc<Self>) -> Result<Rc<[T]>, Rc<Self>> {
         match Rc::get_mut(&mut self) {
             // SAFETY: `SliceCell<T>` has the same layout as `[T]`.
@@ -485,8 +398,32 @@ impl<T> SliceCell<T> {
         }
     }
 
+    /// Replacement for `TryFrom` impl, since `Rc` is not fundamental
+    pub fn try_size_rc<const N: usize>(self: Rc<Self>) -> Result<Rc<ArrayCell<T, N>>, Rc<Self>> {
+        if self.len() == N {
+            Ok({
+                let the_rc = self
+                    .into_std_transposed_rc()
+                    .try_into()
+                    .ok()
+                    .expect("already checked the length");
+                ArrayCell::from_std_transposed_rc(the_rc)
+            })
+        } else {
+            Err(self)
+        }
+    }
+}
+
+impl<T> SliceCell<T> {
+    /// Returns a raw pointer to the underlying data in this `SliceCell`.
+    pub fn as_ptr(&self) -> *mut [T] {
+        UnsafeCell::raw_get(&self.inner)
+    }
+
     /// Unwraps a uniquely borrowed [`SliceCell`] into a slice.
-    pub fn get_mut(&mut self) -> &mut [T] {
+    #[doc(alias = "get_mut")]
+    pub fn as_mut(&mut self) -> &mut [T] {
         self.inner.get_mut()
     }
 
@@ -498,12 +435,23 @@ impl<T> SliceCell<T> {
         unsafe { &mut *(inner as *mut [T] as *mut _) }
     }
 
+    /// Returns a reference to an element or subslice depending on the type of index.
+    ///
+    /// See [`slice::get`].
+    pub fn get<I: SliceCellIndex<Self>>(&self, idx: I) -> Option<&I::Output> {
+        idx.get(self)
+    }
+
+    /// Returns a mutable reference to an element or subslice depending on the type of index.
+    ///
+    /// See also [`slice::get_mut`].
+    pub fn get_mut<I: SliceCellIndex<Self>>(&mut self, idx: I) -> Option<&mut I::Output> {
+        idx.get_mut(self)
+    }
+
     /// Returns the length of the [`SliceCell`].
     pub const fn len(&self) -> usize {
-        // SAFETY: `SliceCell<T>` has the same layout as `[T]`.
-        unsafe { &*(self as *const Self as *const [UnsafeCell<T>]) }.len()
-        // TODO: when `slice_ptr_len` becomes stable:
-        // `(self as *const Self as *const [UnsafeCell<T>]).len()`
+        self.as_std_transposed_ref().len()
     }
 
     /// Divide one `SliceCell` into two at an index.
@@ -512,9 +460,11 @@ impl<T> SliceCell<T> {
     ///
     /// See [slice::split_at]
     pub fn split_at(&self, mid: usize) -> (&SliceCell<T>, &SliceCell<T>) {
-        let (start, end) = self.as_raw_ref().split_at(mid);
-        // SAFETY: the inputs come from the output of `SliceCell::as_raw_ref`, and `.split_at`
-        unsafe { (Self::from_raw_ref(start), Self::from_raw_ref(end)) }
+        let (start, end) = self.as_std_transposed_ref().split_at(mid);
+        (
+            Self::from_std_transposed_ref(start),
+            Self::from_std_transposed_ref(end),
+        )
     }
 
     /// Divide one mutable `SliceCell` into two at an index.
@@ -523,67 +473,43 @@ impl<T> SliceCell<T> {
     ///
     /// See [slice::split_at_mut]
     pub fn split_at_mut(&mut self, mid: usize) -> (&mut SliceCell<T>, &mut SliceCell<T>) {
-        let (start, end) = self.as_raw_mut().split_at_mut(mid);
-        // SAFETY: the inputs come from the output of `SliceCell::as_raw_mut`, and `.split_at_mut`
-        unsafe { (Self::from_raw_mut(start), Self::from_raw_mut(end)) }
+        let (start, end) = self.as_mut().split_at_mut(mid);
+        (Self::from_mut(start), Self::from_mut(end))
     }
 
     /// Returns the first and all the rest of the elements of the `SliceCell`, or None if it is empty.
     ///
     /// See [slice::split_first]
-    #[cfg(feature = "assume_cell_layout")]
     pub fn split_first(&self) -> Option<(&Cell<T>, &SliceCell<T>)> {
-        let (first, end) = self.as_raw_ref().split_first()?;
-        Some((
-            // SAFETY: TODO
-            unsafe { &*(first as *const UnsafeCell<T> as *const Cell<T>) },
-            // SAFETY: the inputs come from the output of `SliceCell::as_raw_mut`, and `.split_first`
-            unsafe { Self::from_raw_ref(end) },
-        ))
+        let (first, end) = self.as_std_transposed_ref().split_first()?;
+        Some((first, Self::from_std_transposed_ref(end)))
     }
 
     /// Returns the first and all the rest of the elements of the `SliceCell`, or None if it is empty.
     ///
     /// See [slice::split_first_mut]
-    #[cfg(feature = "assume_cell_layout")]
     pub fn split_first_mut(&mut self) -> Option<(&mut T, &mut SliceCell<T>)> {
-        let (first, end) = self.as_raw_mut().split_first_mut()?;
-        Some((
-            // SAFETY: TODO
-            UnsafeCell::get_mut(first),
-            // SAFETY: the inputs come from the output of `SliceCell::as_raw_mut`, and `.split_first_mut`.
-            unsafe { Self::from_raw_mut(end) },
-        ))
+        let (first, end) = self.as_mut().split_first_mut()?;
+        Some((first, Self::from_mut(end)))
     }
 
     /// Returns the last and all the rest of the elements of the `SliceCell`, or None if it is empty.
     ///
     /// See [slice::split_last]
-    #[cfg(feature = "assume_cell_layout")]
     pub fn split_last(&self) -> Option<(&Cell<T>, &SliceCell<T>)> {
-        let (last, end) = self.as_raw_ref().split_last()?;
-        Some((
-            unsafe { &*(last as *const UnsafeCell<T> as *const Cell<T>) },
-            // SAFETY: the inputs come from the output of `SliceCell::as_raw_ref`, and `.split_last`.
-            unsafe { Self::from_raw_ref(end) },
-        ))
+        let (last, start) = self.as_std_transposed_ref().split_last()?;
+        Some((last, Self::from_std_transposed_ref(start)))
     }
 
     /// Returns the last and all the rest of the elements of the `SliceCell`, or None if it is empty.
     ///
     /// See [slice::split_last_mut]
-    #[cfg(feature = "assume_cell_layout")]
     pub fn split_last_mut(&mut self) -> Option<(&mut T, &mut SliceCell<T>)> {
-        let (last, end) = self.as_raw_mut().split_last_mut()?;
-        Some((
-            // SAFETY: TODO
-            UnsafeCell::get_mut(last),
-            // SAFETY: the inputs come from the output of `SliceCell::as_raw_mut`, and `.split_last_mut`.
-            unsafe { Self::from_raw_mut(end) },
-        ))
+        let (last, start) = self.as_mut().split_last_mut()?;
+        Some((last, Self::from_mut(start)))
     }
 
-    /// Copies all elements from src into self, using a memcpy.
+    /// Copies all elements from src into self, likely using a memcpy.
     ///
     /// The length of src must be the same as self.
     ///
@@ -592,9 +518,33 @@ impl<T> SliceCell<T> {
     where
         T: Copy,
     {
-        assert_eq!(self.len(), src.len());
-        // SAFETY: TODO
-        unsafe { &mut *self.as_ptr() }.copy_from_slice(src);
+        assert!(self.len() == src.len());
+        // Compiles down to a memcpy in release mode, at least on 1.66.0
+        self.iter().zip(src.iter()).for_each(|(dst, src)| {
+            dst.set(*src);
+        });
+    }
+
+    /// Copies all elements from src into self, likely using a memmove.
+    ///
+    /// The length of src must be the same as self.
+    ///
+    /// `self` and `src` may overlap.
+    pub fn copy_from(&self, src: &SliceCell<T>)
+    where
+        T: Copy,
+    {
+        assert!(self.len() == src.len());
+        // SAFETY: *src and *self may overlap, but that's fine since std::ptr::copy is
+        // a memmove, not a memcpy. Both are valid for `self.len() * size_of::<T>()` bytes
+        // for read/write, since their lengths are the same.
+        unsafe {
+            std::ptr::copy(
+                src.as_ptr() as *const T,
+                self.as_ptr() as *mut T,
+                self.len(),
+            );
+        }
     }
 
     /// Clones all elements from src into self.
@@ -602,12 +552,11 @@ impl<T> SliceCell<T> {
     /// The length of src must be the same as self.
     ///
     /// See [slice::copy_from_slice].
-    #[cfg(feature = "assume_cell_layout")]
     pub fn clone_from_slice(&self, src: &[T])
     where
         T: Clone,
     {
-        assert_eq!(self.len(), src.len());
+        assert!(self.len() == src.len());
         // T::clone and T::drop are arbitrary user code, so we can't use `self.inner.get().clone_from_slice()`
         for (dst, val) in self.iter().zip(src.iter().cloned()) {
             dst.set(val);
@@ -615,12 +564,11 @@ impl<T> SliceCell<T> {
     }
 
     /// Take all elements from this `SliceCell` into a mutable slice, leaving `T::default()` in each cell
-    #[cfg(feature = "assume_cell_layout")]
     pub fn take_into_slice(&self, dst: &mut [T])
     where
         T: Default,
     {
-        assert_eq!(self.len(), dst.len());
+        assert!(self.len() == dst.len());
         // T::default and T::drop are arbitrary user code, so we can't hold a reference into self while it runs.
         for (src, dst) in self.iter().zip(dst.iter_mut()) {
             let val = src.take();
@@ -629,7 +577,7 @@ impl<T> SliceCell<T> {
     }
 
     /// Take all elements from this `SliceCell` into a newly allocated `Vec<T>`, leaving `T::default()` in each cell.
-    #[cfg(all(feature = "assume_cell_layout", feature = "alloc"))]
+    #[cfg(feature = "alloc")]
     pub fn take_into_vec(&self) -> Vec<T>
     where
         T: Default,
@@ -642,10 +590,11 @@ impl<T> SliceCell<T> {
     where
         T: Copy,
     {
-        assert_eq!(self.len(), dst.len());
-        // SAFETY: `slice::copy_from_slice` uses a memcpy to copy the slice, and does nothing else, so it does not access`**self`
-        // in an invalid way.
-        dst.copy_from_slice(unsafe { &*self.inner.get() });
+        assert!(self.len() == dst.len());
+        // Compiles down to a memcpy in release mode, at least on 1.66.0
+        self.iter().zip(dst.iter_mut()).for_each(|(src, dst)| {
+            *dst = src.get();
+        });
     }
 
     /// Copy all elements from this `SliceCell` into a newly allocated `Vec<T>`.
@@ -654,18 +603,8 @@ impl<T> SliceCell<T> {
     where
         T: Copy,
     {
-        let mut vec = Vec::with_capacity(self.len());
-        // SAFETY: TODO
-        unsafe {
-            let dst = &mut vec.spare_capacity_mut()[..self.len()];
-            core::ptr::copy_nonoverlapping(
-                self.as_ptr() as *const T,
-                dst.as_mut_ptr().cast(),
-                self.len(),
-            );
-            vec.set_len(self.len());
-        }
-        vec
+        // Compiles down to a memcpy in release mode, at least on 1.66.0
+        self.iter().map(Cell::get).collect()
     }
 
     #[cfg(feature = "alloc")]
@@ -675,7 +614,8 @@ impl<T> SliceCell<T> {
 
     pub fn swap_with_slice(&self, val: &mut [T]) {
         assert_eq!(self.len(), val.len());
-        // SAFETY: TODO
+        // SAFETY: (assumes that) `slice::swap_with_slice` uses memcpy-like operations,
+        // and does not run arbitrary user code that could access `*self` racily
         unsafe { &mut *self.inner.get() }.swap_with_slice(val);
     }
 
@@ -691,26 +631,28 @@ impl<T> SliceCell<T> {
         if a == b {
             return;
         }
-        // SAFETY: TODO
-        unsafe { &mut *self.inner.get() }.swap(a, b);
+        let a = &self[a];
+        let b = &self[b];
+        Cell::swap(a, b)
     }
 
     /// See [`<[T]>::rotate_left`](slice::rotate_left)
     pub fn rotate_left(&self, mid: usize) {
-        // SAFETY: TODO
+        // SAFETY: (assumes that) `slice::rotate_right` uses memcpy-like operations,
+        // and does not run arbitrary user code that could access `*self` racily
         unsafe { &mut *self.inner.get() }.rotate_left(mid)
     }
 
     /// See [`<[T]>::rotate_right`](slice::rotate_right)
     pub fn rotate_right(&self, mid: usize) {
-        // SAFETY: TODO
+        // SAFETY: (assumes that) `slice::rotate_right` uses memcpy-like operations,
+        // and does not run arbitrary user code that could access `*self` racily
         unsafe { &mut *self.inner.get() }.rotate_right(mid)
     }
 
     /// Fills self with elements by cloning value.
     ///
     /// See also: [`<[T]>::fill`](slice::fill).
-    #[cfg(feature = "assume_cell_layout")]
     pub fn fill(&self, val: T)
     where
         T: Clone,
@@ -723,30 +665,12 @@ impl<T> SliceCell<T> {
     /// Fills self with elements returned by calling a closure repeatedly.
     ///
     /// See also: [`<[T]>::fill_with`](slice::fill_with).
-    #[cfg(feature = "assume_cell_layout")]
     pub fn fill_with<F>(&self, mut f: F)
     where
         F: FnMut() -> T,
     {
         for dst in self {
             dst.set(f());
-        }
-    }
-
-    #[cfg(feature = "rc")]
-    /// Replacement for `TryFrom` impl, since `Rc` is not fundamental
-    pub fn try_size_rc<const N: usize>(self: Rc<Self>) -> Result<Rc<ArrayCell<T, N>>, Rc<Self>> {
-        if self.len() == N {
-            Ok({
-                let the_rc = self
-                    .into_raw_rc()
-                    .try_into()
-                    .expect("already checked the length");
-                // SAFETY: `the_rc` is the result of `SliceCell::into_raw_rc`.
-                unsafe { ArrayCell::from_raw_rc(the_rc) }
-            })
-        } else {
-            Err(self)
         }
     }
 
@@ -760,12 +684,13 @@ impl<T> SliceCell<T> {
             let chunk_count = self.len() / N;
             let remainder = self.len() % N;
             let (chunks, remainder) = self.split_at(self.len() - remainder);
-            let chunks: &[UnsafeCell<T>] = chunks.as_raw_ref();
-            // SAFETY: TODO
-            let chunks: &[UnsafeCell<[T; N]>] =
+            let chunks: &[Cell<T>] = chunks.as_std_transposed_ref();
+            // SAFETY: [[T; N]] has the same layout as [T], Cell<T> has the same layout as T
+            // (so [Cell<T>] => [[Cell<T>; N]] => [Cell<[T; N]>]),
+            // and we calculated the correct length.
+            let chunks: &[Cell<[T; N]>] =
                 unsafe { core::slice::from_raw_parts(chunks.as_ptr().cast(), chunk_count) };
-            // SAFETY: TODO
-            let chunks: &SliceCell<[T; N]> = unsafe { SliceCell::from_raw_ref(chunks) };
+            let chunks: &SliceCell<[T; N]> = SliceCell::from_std_transposed_ref(chunks);
             (chunks, remainder)
         }
     }
@@ -780,12 +705,13 @@ impl<T> SliceCell<T> {
             let chunk_count = self.len() / N;
             let remainder = self.len() % N;
             let (remainder, chunks) = self.split_at(remainder);
-            let chunks: &[UnsafeCell<T>] = chunks.as_raw_ref();
-            // SAFETY: TODO
-            let chunks: &[UnsafeCell<[T; N]>] =
+            let chunks: &[Cell<T>] = chunks.as_std_transposed_ref();
+            // SAFETY: [[T; N]] has the same layout as [T], Cell<T> has the same layout as T
+            // (so [Cell<T>] => [[Cell<T>; N]] => [Cell<[T; N]>]),
+            // and we calculated the correct length.
+            let chunks: &[Cell<[T; N]>] =
                 unsafe { core::slice::from_raw_parts(chunks.as_ptr().cast(), chunk_count) };
-            // SAFETY: TODO
-            let chunks: &SliceCell<[T; N]> = unsafe { SliceCell::from_raw_ref(chunks) };
+            let chunks: &SliceCell<[T; N]> = SliceCell::from_std_transposed_ref(chunks);
             (remainder, chunks)
         }
     }
@@ -800,12 +726,11 @@ impl<T> SliceCell<T> {
             let chunk_count = self.len() / N;
             let remainder = self.len() % N;
             let (chunks, remainder) = self.split_at_mut(self.len() - remainder);
-            let chunks: &mut [UnsafeCell<T>] = chunks.as_raw_mut();
-            // SAFETY: TODO
-            let chunks: &mut [UnsafeCell<[T; N]>] =
+            let chunks: &mut [T] = chunks.as_mut();
+            // SAFETY: [[T; N]] has the same layout as [T], and we calculated the correct length.
+            let chunks: &mut [[T; N]] =
                 unsafe { core::slice::from_raw_parts_mut(chunks.as_mut_ptr().cast(), chunk_count) };
-            // SAFETY: TODO
-            let chunks: &mut SliceCell<[T; N]> = unsafe { SliceCell::from_raw_mut(chunks) };
+            let chunks: &mut SliceCell<[T; N]> = SliceCell::from_mut(chunks);
             (chunks, remainder)
         }
     }
@@ -820,46 +745,65 @@ impl<T> SliceCell<T> {
             let chunk_count = self.len() / N;
             let remainder = self.len() % N;
             let (remainder, chunks) = self.split_at_mut(remainder);
-            let chunks: &mut [UnsafeCell<T>] = chunks.as_raw_mut();
-            // SAFETY: TODO
-            let chunks: &mut [UnsafeCell<[T; N]>] =
-            // SAFETY: TODO
-            unsafe { core::slice::from_raw_parts_mut(chunks.as_mut_ptr().cast(), chunk_count) };
-            let chunks: &mut SliceCell<[T; N]> = unsafe { SliceCell::from_raw_mut(chunks) };
+            let chunks: &mut [T] = chunks.as_mut();
+            // SAFETY: [[T; N]] has the same layout as [T], and we calculated the correct length.
+            let chunks: &mut [[T; N]] =
+                unsafe { core::slice::from_raw_parts_mut(chunks.as_mut_ptr().cast(), chunk_count) };
+            let chunks: &mut SliceCell<[T; N]> = SliceCell::from_mut(chunks);
             (remainder, chunks)
         }
     }
 
-    #[cfg(feature = "assume_cell_layout")]
     pub fn iter(&self) -> core::slice::Iter<'_, Cell<T>> {
         IntoIterator::into_iter(self)
     }
 
     pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, T> {
-        self.get_mut().iter_mut()
+        self.as_mut().iter_mut()
     }
 }
 
 impl<T, const N: usize> SliceCell<[T; N]> {
+    /// Flattens a `&SliceCell<[T; N]>` into a `&SliceCell<T>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the length of the resulting `SliceCell` would overflow a `usize`.
+    ///
+    /// See also [`slice::flatten`].
     pub fn flatten(&self) -> &SliceCell<T> {
-        let new_len = self.len().checked_mul(N).expect("size overflow");
-        let this: &[UnsafeCell<[T; N]>] = self.as_raw_ref();
-        // SAFETY: TODO
-        let this: &[UnsafeCell<T>] =
+        let new_len = self.len().checked_mul(N).expect("length overflow");
+        let this: &[Cell<[T; N]>] = self.as_std_transposed_ref();
+        // SAFETY: [[T; N]] has the same layout as [T], Cell<T> has the same layout as T
+        // (so [Cell<[T; N]>] => [[Cell<T>; N]] => [Cell<T>]),
+        // and we calculated the correct length.
+        let this: &[Cell<T>] =
             unsafe { core::slice::from_raw_parts(this.as_ptr().cast(), new_len) };
-        // SAFETY: TODO
-        let this: &SliceCell<T> = unsafe { SliceCell::from_raw_ref(this) };
+        let this: &SliceCell<T> = SliceCell::from_std_transposed_ref(this);
         this
     }
+
+    /// Flattens a `&mut SliceCell<[T; N]>` into a `&mut SliceCell<T>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the length of the resulting `SliceCell` would overflow a `usize`.
+    ///
+    /// See also [`slice::flatten_mut`].
     pub fn flatten_mut(&mut self) -> &mut SliceCell<T> {
-        let new_len = self.len().checked_mul(N).expect("size overflow");
-        let this: &mut [UnsafeCell<[T; N]>] = self.as_raw_mut();
-        // SAFETY: TODO
-        let this: &mut [UnsafeCell<T>] =
+        let new_len = self.len().checked_mul(N).expect("length overflow");
+        let this: &mut [[T; N]] = self.as_mut();
+        // SAFETY: [[T; N]] has the same layout as [T], and we calculated the correct length.
+        let this: &mut [T] =
             unsafe { core::slice::from_raw_parts_mut(this.as_mut_ptr().cast(), new_len) };
-        // SAFETY: TODO
-        let this: &mut SliceCell<T> = unsafe { SliceCell::from_raw_mut(this) };
+        let this: &mut SliceCell<T> = SliceCell::from_mut(this);
         this
+    }
+
+    /// Access this `SliceCell` of [array]s as a [slice] of [`ArrayCell`]s.
+    #[cfg(any())]
+    pub fn as_slice_of_arraycells(&self) -> &[ArrayCell<T, N>] {
+        todo!()
     }
 }
 
@@ -879,49 +823,44 @@ impl<T, I: SliceCellIndex<Self>> IndexMut<I> for SliceCell<T> {
 
 impl<'a, T: 'a> Default for &'a mut ArrayCell<T, 0> {
     fn default() -> Self {
-        // SAFETY: the array is empty
-        unsafe { ArrayCell::from_raw_mut(&mut []) }
+        ArrayCell::from_mut(&mut [])
     }
 }
 
 impl<'a, T: 'a> Default for &'a ArrayCell<T, 0> {
     fn default() -> Self {
-        // SAFETY: the array is empty
-        unsafe { ArrayCell::from_raw_ref(&[]) }
+        ArrayCell::from_mut(&mut [])
     }
 }
 
 impl<'a, T: 'a> Default for &'a mut SliceCell<T> {
     fn default() -> Self {
-        &mut <&mut ArrayCell<T, 0>>::default()[..]
+        SliceCell::from_mut(&mut [])
     }
 }
 
 impl<'a, T: 'a> Default for &'a SliceCell<T> {
     fn default() -> Self {
-        &<&ArrayCell<T, 0>>::default()[..]
+        SliceCell::from_mut(&mut [])
     }
 }
 
 impl<'a, T, const N: usize> From<&'a ArrayCell<T, N>> for &'a SliceCell<T> {
     fn from(value: &'a ArrayCell<T, N>) -> Self {
-        // SAFETY: the input to `SliceCell::from_raw_ref` is the result of `ArrayCell::into_raw_ref`.
-        unsafe { SliceCell::from_raw_ref(value.as_raw_ref()) }
+        SliceCell::from_std_ref(value.as_std_ref())
     }
 }
 
 impl<'a, T, const N: usize> From<&'a mut ArrayCell<T, N>> for &'a mut SliceCell<T> {
     fn from(value: &'a mut ArrayCell<T, N>) -> Self {
-        // SAFETY: the input to `SliceCell::from_raw_mut` is the result of `ArrayCell::into_raw_mut`.
-        unsafe { SliceCell::from_raw_mut(value.as_raw_mut()) }
+        SliceCell::from_mut(value.as_mut())
     }
 }
 
 #[cfg(feature = "alloc")]
 impl<'a, T, const N: usize> From<Box<ArrayCell<T, N>>> for Box<SliceCell<T>> {
     fn from(value: Box<ArrayCell<T, N>>) -> Self {
-        // SAFETY: the input to `SliceCell::from_raw_boxed` is the result of `ArrayCell::into_raw_boxed`.
-        unsafe { SliceCell::from_raw_boxed(value.into_raw_boxed()) }
+        SliceCell::from_std_boxed(value.into_std_boxed())
     }
 }
 
@@ -932,11 +871,10 @@ impl<'a, T, const N: usize> TryFrom<&'a SliceCell<T>> for &'a ArrayCell<T, N> {
         if value.len() == N {
             Ok({
                 let the_ref = value
-                    .as_raw_ref()
+                    .as_std_transposed_ref()
                     .try_into()
                     .expect("already checked the length");
-                // SAFETY: `the_ref` is the result of `SliceCell::as_raw_ref`.
-                unsafe { ArrayCell::from_raw_ref(the_ref) }
+                ArrayCell::from_std_transposed_ref(the_ref)
             })
         } else {
             Err(value)
@@ -951,11 +889,10 @@ impl<'a, T, const N: usize> TryFrom<&'a mut SliceCell<T>> for &'a mut ArrayCell<
         if value.len() == N {
             Ok({
                 let the_mut = value
-                    .as_raw_mut()
+                    .as_mut()
                     .try_into()
                     .expect("already checked the length");
-                // SAFETY: `the_mut` is the result of `SliceCell::as_raw_mut`.
-                unsafe { ArrayCell::from_raw_mut(the_mut) }
+                ArrayCell::from_mut(the_mut)
             })
         } else {
             Err(value)
@@ -971,11 +908,11 @@ impl<'a, T, const N: usize> TryFrom<Box<SliceCell<T>>> for Box<ArrayCell<T, N>> 
         if value.len() == N {
             Ok({
                 let the_box = value
-                    .into_raw_boxed()
+                    .into_std_transposed_boxed()
                     .try_into()
+                    .ok()
                     .expect("already checked the length");
-                // SAFETY: `the_box` is the result of `SliceCell::into_raw_box`.
-                unsafe { ArrayCell::from_raw_boxed(the_box) }
+                ArrayCell::from_std_transposed_boxed(the_box)
             })
         } else {
             Err(value)
@@ -983,7 +920,6 @@ impl<'a, T, const N: usize> TryFrom<Box<SliceCell<T>>> for Box<ArrayCell<T, N>> 
     }
 }
 
-#[cfg(feature = "assume_cell_layout")]
 impl<'a, T> IntoIterator for &'a SliceCell<T> {
     type Item = &'a Cell<T>;
 
@@ -994,7 +930,6 @@ impl<'a, T> IntoIterator for &'a SliceCell<T> {
     }
 }
 
-#[cfg(feature = "assume_cell_layout")]
 impl<'a, T, const N: usize> IntoIterator for &'a ArrayCell<T, N> {
     type Item = &'a Cell<T>;
 
@@ -1011,7 +946,7 @@ impl<'a, T> IntoIterator for &'a mut SliceCell<T> {
     type IntoIter = core::slice::IterMut<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.get_mut().iter_mut()
+        self.as_mut().iter_mut()
     }
 }
 
@@ -1021,6 +956,6 @@ impl<'a, T, const N: usize> IntoIterator for &'a mut ArrayCell<T, N> {
     type IntoIter = core::slice::IterMut<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.get_mut().iter_mut()
+        self.as_mut().iter_mut()
     }
 }

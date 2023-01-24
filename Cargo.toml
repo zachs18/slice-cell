@@ -1,6 +1,6 @@
 [package]
 name = "slice-cell"
-version = "0.0.4"
+version = "0.0.5"
 authors = ["Zachary S"]
 edition = "2021"
 description = "A `Cell<[T]>`-like mutable slice, that allows slice-like APIs."
@@ -13,8 +13,8 @@ repository = "https://github.com/zachs18/slice-cell"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["std", "assume_cell_layout", "rc"]
-assume_cell_layout = []
+default = ["std", "rc"]
+full = ["std", "rc", "tokio"]
 std = ["alloc"]
 alloc = []
 rc = ["alloc"]

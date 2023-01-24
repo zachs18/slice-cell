@@ -19,8 +19,9 @@ impl Write for &SliceCell<u8> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let write_len = std::cmp::min(self.len(), buf.len());
         if write_len > 0 {
-            self[..write_len].copy_from_slice(buf);
-            *self = self.split_at(write_len).1;
+            let dst;
+            (dst, *self) = self.split_at(write_len);
+            dst.copy_from_slice(buf);
         }
         Ok(write_len)
     }
@@ -34,8 +35,9 @@ impl Read for &SliceCell<u8> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let read_len = std::cmp::min(self.len(), buf.len());
         if read_len > 0 {
-            self[..read_len].copy_into_slice(&mut buf[..read_len]);
-            *self = self.split_at(read_len).1;
+            let src;
+            (src, *self) = self.split_at(read_len);
+            src.copy_into_slice(&mut buf[..read_len]);
         }
         Ok(read_len)
     }
@@ -44,19 +46,27 @@ impl Read for &SliceCell<u8> {
         if read_len == 0 {
             return Ok(0);
         }
+
         buf.reserve(read_len);
-        // SAFETY: cannot use `Vec::extend_from_slice`, since it calls `T::clone`, which is arbitrary user code.
+        let write_into = buf.spare_capacity_mut();
+        debug_assert!(write_into.len() >= read_len);
+
+        let src;
+        (src, *self) = self.split_at(read_len);
+        // SAFETY: cannot use `Vec::extend_from_slice`, since it could reallocate, which could be arbitrary user code,
+        // e.g. a custom global allocator could access *src through a `thread_local`.
         unsafe {
-            let write_into = buf.spare_capacity_mut();
-            debug_assert!(write_into.len() >= read_len);
+            // SAFETY: *src does not overlap with write_into,
+            // and no other code can access *src concurrently,
+            // since copy_nonoverlapping is just a memcpy.
             std::ptr::copy_nonoverlapping(
-                self.as_ptr().cast::<u8>(),
+                src.as_ptr().cast::<u8>(),
                 write_into.as_mut_ptr().cast(),
                 read_len,
             );
+            // SAFETY: We just wrote `read_len` bytes into the spare capacity.
             buf.set_len(buf.len() + read_len);
         }
-        *self = self.split_at(read_len).1;
         Ok(read_len)
     }
 }
@@ -154,12 +164,14 @@ impl AsyncRead for &SliceCell<u8> {
     ) -> Poll<io::Result<()>> {
         let read_len = std::cmp::min(buf.remaining(), self.len());
         if read_len > 0 {
+            let src;
+            (src, *self) = self.split_at(read_len);
             if cfg!(feature = "tokio_assumptions") {
                 // SAFETY: Assumes that `ReadBuf::put_slice` does not perform a
                 // context switch, and that it only accesses itself and the slice
                 // passed to it. (i.e. it does not access *self except through
                 // the reference we pass to it)
-                buf.put_slice(unsafe { &*self[..read_len].as_ptr() });
+                buf.put_slice(unsafe { &*src.as_ptr() });
             } else {
                 // SAFETY: we do not de-initialize any bytes of this buffer
                 let unfilled = unsafe { buf.unfilled_mut() };
@@ -167,14 +179,14 @@ impl AsyncRead for &SliceCell<u8> {
                     read_len <= unfilled.len(),
                     "unfilled.len() should be == buf.remaining()"
                 );
-                // SAFETY: we are copying read_len bytes from `self` into `unfilled`.
+                // SAFETY: we are copying read_len bytes from `src` into `unfilled`.
                 // We know they do not overlap, since `unfilled` is `&mut [u8]` and
-                // `self` is a cell type.
+                // `src` is a cell type.
                 // We know we do not go off the end of either, since `read_len` is
                 // the minimum of their lengths.
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        self.as_ptr() as *const u8,
+                        src.as_ptr() as *const u8,
                         unfilled.as_mut_ptr().cast(),
                         read_len,
                     );
@@ -185,7 +197,6 @@ impl AsyncRead for &SliceCell<u8> {
                 }
                 buf.advance(read_len);
             }
-            *self = self.split_at(read_len).1;
         }
         Poll::Ready(Ok(()))
     }
