@@ -1,6 +1,6 @@
 [package]
 name = "slice-cell"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Zachary S"]
 edition = "2021"
 description = "A `Cell<[T]>`-like mutable slice, that allows slice-like APIs."

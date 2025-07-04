@@ -263,7 +263,7 @@ impl<T: AsRef<SliceCell<u8>>> AsyncWrite for Cursor<T> {
     }
 }
 
-#[cfg_attr(doc_cfg, doc(cfg(feature = "tokio")))]
+#[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "tokio")))]
 #[cfg(feature = "tokio")]
 impl<T: AsRef<SliceCell<u8>>> AsyncSeek for Cursor<T> {
     fn start_seek(mut self: Pin<&mut Self>, style: SeekFrom) -> io::Result<()> {

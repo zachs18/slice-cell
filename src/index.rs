@@ -1,6 +1,4 @@
 use core::cell::Cell;
-#[cfg(feature = "assume_cell_layout")]
-use core::cell::Cell;
 
 use crate::{ArrayCell, SliceCell};
 
