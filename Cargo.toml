@@ -1,6 +1,6 @@
 [package]
 name = "slice-cell"
-version = "0.0.5"
+version = "0.1.0"
 authors = ["Zachary S"]
 edition = "2021"
 description = "A `Cell<[T]>`-like mutable slice, that allows slice-like APIs."
@@ -10,8 +10,6 @@ categories = ["data-structures"]
 keywords = ["cell", "no_std"]
 repository = "https://github.com/zachs18/slice-cell"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [features]
 default = ["std", "rc"]
 full = ["std", "rc", "tokio"]
@@ -20,6 +18,12 @@ alloc = []
 rc = ["alloc"]
 tokio = ["dep:tokio", "std"]
 tokio_assumptions = ["tokio"]
+nightly_docs = []
 
 [dependencies]
 tokio = { version = "1.24.1", default-features = false, optional = true }
+
+[package.metadata.docs.rs]
+# To build locally:
+# cargo +nightly doc -F full,nightly_docs --no-deps --open
+features = ["full", "nightly_docs"]

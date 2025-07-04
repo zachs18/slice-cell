@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(feature = "nightly_docs", feature(doc_cfg))]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -20,13 +21,11 @@ use index::SliceCellIndex;
 //
 // Note: `Cell::get_mut` exists to go from `&mut Cell<T>` to `&mut T`.
 //
-// Currently, `split_first`/`split_last` return `&mut T`, but
+// Currently, `split_first`/`split_last`/`.iter_mut` return `&mut T`, but
 // `get_mut(usize)` returns `&mut Cell<T>`.
 
-// TODO: #[cfg_attr(doc_cfg, doc(cfg(feature = ...)))]
-// see: https://github.com/rust-random/rand/pull/1019/files
-
 mod index;
+#[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "std")))]
 #[cfg(feature = "std")]
 pub mod io;
 
@@ -109,6 +108,7 @@ impl<T, const N: usize> ArrayCell<T, N> {
     }
 }
 
+#[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "alloc")))]
 #[cfg(feature = "alloc")]
 impl<T, const N: usize> ArrayCell<T, N> {
     /// View this [`ArrayCell`] as a [`Cell`] of an [array] of `N` elements.
@@ -131,8 +131,21 @@ impl<T, const N: usize> ArrayCell<T, N> {
         // See `ArrayCell::as_std_ref` for safety.
         unsafe { Box::from_raw(Box::into_raw(std).cast()) }
     }
+
+    /// Wraps a [boxed](alloc::boxed::Box) [array] in an [`ArrayCell`].
+    pub fn new_boxed(inner: Box<[T; N]>) -> Box<Self> {
+        // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
+        unsafe { Box::from_raw(Box::into_raw(inner).cast()) }
+    }
+
+    /// Unwaps a [boxed](alloc::boxed::Box) [ArrayCell] into an [array].
+    pub fn into_inner_boxed(self: Box<Self>) -> Box<[T; N]> {
+        // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
+        unsafe { Box::from_raw(Box::into_raw(self).cast()) }
+    }
 }
 
+#[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "rc")))]
 #[cfg(feature = "rc")]
 impl<T, const N: usize> ArrayCell<T, N> {
     /// View this [`ArrayCell`] as a [`Cell`] of an [array] of `N` elements.
@@ -155,6 +168,35 @@ impl<T, const N: usize> ArrayCell<T, N> {
         // See `ArrayCell::as_std_ref` for safety.
         unsafe { Rc::from_raw(Rc::into_raw(std).cast()) }
     }
+
+    /// Wraps a [reference-counted](alloc::rc::Rc) [array] in an `ArrayCell`, if it is uniquely owned.
+    pub fn try_new_rc(mut inner: Rc<[T; N]>) -> Result<Rc<Self>, Rc<[T; N]>> {
+        match Rc::get_mut(&mut inner) {
+            // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
+            // And: there are no other `Rc` or `Weak` pointers to this allocation, so it is sound
+            // to "add" interior mutability to it
+            Some(_unique) => Ok(unsafe { Rc::from_raw(Rc::into_raw(inner).cast()) }),
+            None => Err(inner),
+        }
+    }
+
+    /// Unwraps a [reference-counted](alloc::rc::Rc) [`ArrayCell`] into an [array], if it is uniquely owned.
+    pub fn try_into_inner_rc(mut self: Rc<Self>) -> Result<Rc<[T; N]>, Rc<Self>> {
+        match Rc::get_mut(&mut self) {
+            // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
+            // And: there are no other `Rc` or `Weak` pointers to this allocation, so it is sound
+            // to "remove" interior mutability from it
+            Some(_unique) => Ok(unsafe { Rc::from_raw(Rc::into_raw(self).cast()) }),
+            None => Err(self),
+        }
+    }
+
+    /// Replacement for `From` impl, since `Rc` is not fundamental.
+    // TODO: If manual coercion is added, just make ArrayCell<T, N> coerce to SliceCell<T>
+    // and deprecate `ArrayCell::unsize_rc` (but not `SliceCell::try_size_rc`).
+    pub fn unsize_rc(self: Rc<Self>) -> Rc<SliceCell<T>> {
+        SliceCell::from_std_transposed_rc(ArrayCell::into_std_transposed_rc(self))
+    }
 }
 
 impl<T, const N: usize> ArrayCell<T, N> {
@@ -173,52 +215,6 @@ impl<T, const N: usize> ArrayCell<T, N> {
         Self {
             inner: UnsafeCell::new(inner),
         }
-    }
-
-    /// Wraps a [boxed](alloc::boxed::Box) [array] in an [`ArrayCell`].
-    #[cfg(feature = "alloc")]
-    pub fn new_boxed(inner: Box<[T; N]>) -> Box<Self> {
-        // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
-        unsafe { Box::from_raw(Box::into_raw(inner).cast()) }
-    }
-
-    /// Unwaps a [boxed](alloc::boxed::Box) [ArrayCell] into an [array].
-    #[cfg(feature = "alloc")]
-    pub fn into_inner_boxed(self: Box<Self>) -> Box<[T; N]> {
-        // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
-        unsafe { Box::from_raw(Box::into_raw(self).cast()) }
-    }
-
-    /// Wraps a [reference-counted](alloc::rc::Rc) [array] in an `ArrayCell`, if it is uniquely owned.
-    #[cfg(feature = "rc")]
-    pub fn try_new_rc(mut inner: Rc<[T; N]>) -> Result<Rc<Self>, Rc<[T; N]>> {
-        match Rc::get_mut(&mut inner) {
-            // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
-            // And: there are no other `Rc` or `Weak` pointers to this allocation, so it is sound
-            // to "add" interior mutability to it
-            Some(_unique) => Ok(unsafe { Rc::from_raw(Rc::into_raw(inner).cast()) }),
-            None => Err(inner),
-        }
-    }
-
-    /// Unwraps a [reference-counted](alloc::rc::Rc) [`ArrayCell`] into an [array], if it is uniquely owned.
-    #[cfg(feature = "rc")]
-    pub fn try_into_inner_rc(mut self: Rc<Self>) -> Result<Rc<[T; N]>, Rc<Self>> {
-        match Rc::get_mut(&mut self) {
-            // SAFETY: `ArrayCell<T, N>` has the same layout as `[T; N]`.
-            // And: there are no other `Rc` or `Weak` pointers to this allocation, so it is sound
-            // to "remove" interior mutability from it
-            Some(_unique) => Ok(unsafe { Rc::from_raw(Rc::into_raw(self).cast()) }),
-            None => Err(self),
-        }
-    }
-
-    #[cfg(feature = "rc")]
-    /// Replacement for `From` impl, since `Rc` is not fundamental.
-    // TODO: If manual coercion is added, just make ArrayCell<T, N> coerce to SliceCell<T>
-    // and deprecate `ArrayCell::unsize_rc` (but not `SliceCell::try_size_rc`).
-    pub fn unsize_rc(self: Rc<Self>) -> Rc<SliceCell<T>> {
-        SliceCell::from_std_transposed_rc(ArrayCell::into_std_transposed_rc(self))
     }
 
     /// Unwraps a uniquely borrowed [`ArrayCell`] into an array.
@@ -577,6 +573,7 @@ impl<T> SliceCell<T> {
     }
 
     /// Take all elements from this `SliceCell` into a newly allocated `Vec<T>`, leaving `T::default()` in each cell.
+    #[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "alloc")))]
     #[cfg(feature = "alloc")]
     pub fn take_into_vec(&self) -> Vec<T>
     where
@@ -598,6 +595,7 @@ impl<T> SliceCell<T> {
     }
 
     /// Copy all elements from this `SliceCell` into a newly allocated `Vec<T>`.
+    #[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "alloc")))]
     #[cfg(feature = "alloc")]
     pub fn copy_into_vec(&self) -> Vec<T>
     where
@@ -607,6 +605,7 @@ impl<T> SliceCell<T> {
         self.iter().map(Cell::get).collect()
     }
 
+    #[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "alloc")))]
     #[cfg(feature = "alloc")]
     pub fn replace_with_vec(&self, mut src: Vec<T>) {
         self.swap_with_slice(&mut src);
@@ -857,6 +856,7 @@ impl<'a, T, const N: usize> From<&'a mut ArrayCell<T, N>> for &'a mut SliceCell<
     }
 }
 
+#[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "alloc")))]
 #[cfg(feature = "alloc")]
 impl<'a, T, const N: usize> From<Box<ArrayCell<T, N>>> for Box<SliceCell<T>> {
     fn from(value: Box<ArrayCell<T, N>>) -> Self {
@@ -900,6 +900,7 @@ impl<'a, T, const N: usize> TryFrom<&'a mut SliceCell<T>> for &'a mut ArrayCell<
     }
 }
 
+#[cfg_attr(feature = "nightly_docs", doc(cfg(feature = "alloc")))]
 #[cfg(feature = "alloc")]
 impl<'a, T, const N: usize> TryFrom<Box<SliceCell<T>>> for Box<ArrayCell<T, N>> {
     type Error = Box<SliceCell<T>>;
