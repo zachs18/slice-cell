@@ -1,0 +1,93 @@
+name: Rust
+
+on:
+  push: {}
+  pull_request: {}
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test Rust ${{ matrix.toolchain }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+        - { toolchain: stable, os: ubuntu-latest }
+        - { toolchain: beta, os: ubuntu-latest }
+        - { toolchain: nightly, os: ubuntu-latest }
+        - { toolchain: stable, os: macos-latest }
+        - { toolchain: stable, os: windows-latest }
+        - { toolchain: stable-x86_64-gnu, os: windows-latest }
+    steps:
+    - uses: actions-rust-lang/setup-rust-toolchain@v2
+      with:
+        toolchain: ${{ matrix.toolchain }}
+    - uses: actions/checkout@v6
+    - run: rustc --version --verbose
+    - run: cargo test --verbose --no-default-features
+    - run: cargo test --verbose --no-default-features --features alloc
+    - run: cargo test --verbose --no-default-features --features alloc,rc
+    - run: cargo test --verbose
+    - run: cargo test --verbose --features full
+
+  no-lock-test:
+    name: Test Rust ${{ matrix.toolchain }} on ${{ matrix.os }} without Cargo.lock
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+        - { toolchain: stable, os: ubuntu-latest }
+        - { toolchain: beta, os: ubuntu-latest }
+        - { toolchain: nightly, os: ubuntu-latest }
+        - { toolchain: stable, os: windows-latest }
+    steps:
+    - uses: actions-rust-lang/setup-rust-toolchain@v2
+      with:
+        toolchain: ${{ matrix.toolchain }}
+    - uses: actions/checkout@v6
+    - run: rm Cargo.lock
+    - run: rustc --version --verbose
+    - run: cargo test --verbose --no-default-features
+    - run: cargo test --verbose --no-default-features --features alloc
+    - run: cargo test --verbose --no-default-features --features alloc,rc
+    - run: cargo test --verbose
+    - run: cargo test --verbose --features full
+
+  miri-test:
+    name: Test with miri
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions-rust-lang/setup-rust-toolchain@v2
+      with:
+        toolchain: nightly
+        components: miri,rust-src
+        # `cargo miri setup` fires an unused dependency warning, which `CARGO_BUILD_WARNINGS=deny`
+        # upgrades into an error.
+        build-warnings: ""
+    - uses: actions/checkout@v6
+    - run: rustc --version --verbose
+    - run: cargo miri setup
+    - run: cargo miri test --verbose --no-default-features
+    - run: cargo miri test --verbose --features full
+    - run: cargo miri test --verbose --features full,tokio_assumptions
+
+  no-lock-miri-test:
+    name: Test with miri without Cargo.lock
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions-rust-lang/setup-rust-toolchain@v2
+      with:
+        toolchain: nightly
+        components: miri,rust-src
+        # `cargo miri setup` fires an unused dependency warning, which `CARGO_BUILD_WARNINGS=deny`
+        # upgrades into an error.
+        build-warnings: ""
+    - uses: actions/checkout@v6
+    - run: rm Cargo.lock
+    - run: rustc --version --verbose
+    - run: cargo miri setup
+    - run: cargo miri test --verbose --no-default-features
+    - run: cargo miri test --verbose --features full
+    - run: cargo miri test --verbose --features full,tokio_assumptions
