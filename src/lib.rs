@@ -535,7 +535,7 @@ impl<T> SliceCell<T> {
         // a memmove, not a memcpy. Both are valid for `self.len() * size_of::<T>()` bytes
         // for read/write, since their lengths are the same.
         unsafe {
-            std::ptr::copy(
+            core::ptr::copy(
                 src.as_ptr() as *const T,
                 self.as_ptr() as *mut T,
                 self.len(),
